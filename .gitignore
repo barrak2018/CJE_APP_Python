@@ -1,0 +1,6 @@
+config.json
+cje_venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/

@@ -1,0 +1,21 @@
+{
+  "database": {
+    "user": "postgres",
+    "password": "cambiar",
+    "host": "localhost",
+    "port": 5432,
+    "name": "CJE"
+  },
+  "auth": {
+    "api_user": "admin",
+    "api_password": "cambiar",
+    "secret_key": "generar-clave-aleatoria",
+    "token_expire_minutes": 1440
+  },
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "reload": true,
+    "url": "http://127.0.0.1:8000"
+  }
+}

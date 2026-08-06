@@ -1,0 +1,93 @@
+-- ====================================================================
+-- SCRIPT DE CREACIÓN DE BASE DE DATOS (INVENTARIO Y FACTURACIÓN)
+-- ====================================================================
+
+-- 1. TABLAS INDEPENDIENTES (Sin llaves foráneas)
+
+CREATE TABLE public."CLIENTE" (
+    "CEDULA" bigint PRIMARY KEY,
+    "NOMBRE" text NOT NULL,
+    "CORREO" text,
+    "TELEFONO" text,
+    "SALDO" real DEFAULT 0.0
+);
+
+CREATE TABLE public."FLETE" (
+    "ID_FLETE" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "FECHA" date NOT NULL,
+    "PROVEEDOR" text NOT NULL,
+    "SHEPING" real DEFAULT 0.0 NOT NULL,
+    "NOMBRE_CURRIER" text NOT NULL,
+    "VIA" "char" NOT NULL,
+    "PRECIO_CURRIER" real DEFAULT 0.0 NOT NULL,
+    "CANTIDAD" integer DEFAULT 0 NOT NULL,
+    "TOTAL_FLETE" real GENERATED ALWAYS AS ( ("SHEPING" + "PRECIO_CURRIER") / NULLIF("CANTIDAD", 0)::real ) STORED
+);
+
+CREATE TABLE public."CATALOGO" (
+    "ID_CATALOGO" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "NOMBRE" text NOT NULL,
+    "MARCA" text,
+    "PRESENTACION" text
+);
+
+
+-- 2. TABLAS DEPENDIENTES (Contienen llaves foráneas)
+
+CREATE TABLE public."INVENTARIO" (
+    "ID_INVENTARIO" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "ID_CATALOGO" bigint NOT NULL,
+    "CANTIDA" integer DEFAULT 0 NOT NULL,
+    "ID_LOTE" bigint NOT NULL,
+    "PRECIO_UNITARIO" real,
+    "COSTO_UNITARIO" real,
+    "GANACIA" real,
+    "PRECIO_VENTA" real
+);
+
+CREATE TABLE public."VENTAS" (
+    "ID_VENTA" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "FECHA" date,
+    "CEDULA" bigint NOT NULL,
+    "PRECIO" real DEFAULT 0 NOT NULL,
+    "TIPO_PAGO" text NOT NULL,
+    "FORMA_DE_PAGO" text NOT NULL,
+    "PAGO" real
+);
+
+CREATE TABLE public."DETALLES_VENTAS" (
+    "ID_DETALLE" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "ID_VENTA" bigint,
+    "ID_INVENTARIO" bigint,
+    "CANTIDAD" integer,
+    -- Precio unitario propio de la línea; NULL = usar INVENTARIO.PRECIO_VENTA
+    "PRECIO_UNITARIO" double precision
+);
+
+CREATE TABLE public."ABONOS" (
+    "ID_ABONO" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "FECHA" date NOT NULL,
+    "CEDULA" bigint NOT NULL,
+    "CANTIDAD" real DEFAULT 0 NOT NULL
+);
+
+
+-- ====================================================================
+-- CREACIÓN DE RELACIONES (LLAVES FORÁNEAS)
+-- ====================================================================
+
+ALTER TABLE public."INVENTARIO"
+    ADD CONSTRAINT "FK_INVENTARIO_CATALOGO" FOREIGN KEY ("ID_CATALOGO") REFERENCES public."CATALOGO"("ID_CATALOGO"),
+    ADD CONSTRAINT "FK_INVENTARIO_FLETE" FOREIGN KEY ("ID_LOTE") REFERENCES public."FLETE"("ID_FLETE");
+COMMENT ON CONSTRAINT "FK_INVENTARIO_FLETE" ON public."INVENTARIO" IS 'Relación con tabla Flete';
+
+ALTER TABLE public."VENTAS"
+    ADD CONSTRAINT "FK_VENTAS_CLIENTE" FOREIGN KEY ("CEDULA") REFERENCES public."CLIENTE"("CEDULA");
+COMMENT ON CONSTRAINT "FK_VENTAS_CLIENTE" ON public."VENTAS" IS 'REFERENCIA A LA TABLA CLIENTES';
+
+ALTER TABLE public."DETALLES_VENTAS"
+    ADD CONSTRAINT "FK_DETALLES_VENTA" FOREIGN KEY ("ID_VENTA") REFERENCES public."VENTAS"("ID_VENTA"),
+    ADD CONSTRAINT "FK_DETALLES_INVENTARIO" FOREIGN KEY ("ID_INVENTARIO") REFERENCES public."INVENTARIO"("ID_INVENTARIO");
+
+ALTER TABLE public."ABONOS"
+    ADD CONSTRAINT "FK_ABONOS_CLIENTE" FOREIGN KEY ("CEDULA") REFERENCES public."CLIENTE"("CEDULA");

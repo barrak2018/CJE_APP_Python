@@ -12,3 +12,4 @@ CJE_GUI.spec
 
 # Archivos generados en tiempo de ejecución
 URL_TUNEL.txt
+logs/

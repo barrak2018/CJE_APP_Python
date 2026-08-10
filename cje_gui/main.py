@@ -6,11 +6,13 @@ from PySide6.QtWidgets import QApplication
 from api_client import ApiClient
 from login_dialog import LoginDialog
 from main_window import MainWindow
+from url_dialog import UrlDialog
 
 SETTINGS_ORG = "CJE Perfumes"
 SETTINGS_APP = "CJE Perfumes"
 KEY_USUARIO = "auth/usuario"
 KEY_PASSWORD = "auth/password"
+KEY_URL = "conexion/url"
 
 
 def cargar_credenciales(settings: QSettings):
@@ -30,6 +32,16 @@ def borrar_credenciales(settings: QSettings):
     settings.sync()
 
 
+def seleccionar_url(settings: QSettings) -> str:
+    dlg = UrlDialog(settings.value(KEY_URL, ""))
+    if not dlg.exec():
+        sys.exit(0)
+    url = dlg.url()
+    settings.setValue(KEY_URL, url)
+    settings.sync()
+    return url
+
+
 def cerrar_sesion(api: ApiClient, settings: QSettings, app: QApplication):
     api.logout()
     borrar_credenciales(settings)
@@ -41,7 +53,8 @@ def main():
     app.setApplicationName("CJE Perfumes")
 
     settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
-    api = ApiClient()
+    url = seleccionar_url(settings)
+    api = ApiClient(base_url=url)
 
     usuario, password = cargar_credenciales(settings)
     logueado = False

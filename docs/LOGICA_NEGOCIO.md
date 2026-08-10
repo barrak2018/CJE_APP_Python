@@ -10,6 +10,19 @@
 
 1. **Todo producto debe tener un lote (flete) asociado.** No se puede crear ni guardar inventario sin lote. Si ya existe un inventario y se intenta quitar su lote, la operación se rechaza.
 
+2. **Cantidad asignada (original) vs stock.** Al registrar un ítem de inventario se indica
+   la **cantidad asignada** (`CANTIDAD_ASIGNADA`): cuántas unidades compró ese flete para
+   ese producto. El stock actual (`CANTIDA`) se iguala a ese valor al crear. Las **ventas
+   descuentan `CANTIDA` pero no `CANTIDAD_ASIGNADA`** (la cantidad original no cambia al
+   vender).
+
+3. **Cupo del flete.** La suma de `CANTIDAD_ASIGNADA` de todos los ítems de inventario de
+   un flete **no puede superar `FLETE.CANTIDAD`** (no se puede asignar más de lo que el
+   flete trajo). La API lo valida al crear o al corregir la cantidad asignada y responde
+   `400` si se excede; tampoco se puede reducir la `CANTIDAD` de un flete por debajo de lo
+   ya asignado. El flete expone `CANTIDAD_ASIGNADA` (suma) y `CANTIDAD_DISPONIBLE`
+   (cupo restante, mínimo 0).
+
 ## Reglas al registrar una venta
 
 1. **El cliente debe existir.** No se puede vender a alguien que no esté registrado en Clientes.
@@ -59,7 +72,8 @@
 
 6. **Todo se guarda al mismo tiempo (transacción).** Si falla cualquier paso, no queda nada guardado.
 
-7. **El stock se descuenta automáticamente** al vender.
+7. **El stock se descuenta automáticamente** al vender: `INVENTARIO.CANTIDA -= CANTIDAD`.
+   La cantidad asignada (`CANTIDAD_ASIGNADA`) del ítem **no cambia** al vender.
 
 ## Al eliminar una venta
 

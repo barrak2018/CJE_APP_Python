@@ -24,10 +24,12 @@ pero estas reglas aplican igual a un SPA, una app móvil o un CLI.
 Interfaz (web / escritorio / móvil) ──HTTP/JSON──► API (FastAPI) ──SQL──► PostgreSQL
 ```
 
-> **Dirección de la API:** en la GUI de escritorio, `ApiClient` toma la URL del campo
-> `api.url` del archivo `cje_api/config.json` (o de la variable `CJE_API_URL` si está
-> definida). Ese valor puede apuntar a local, a una IP de la red o a un dominio, sin
-> cambiar el código (ver `INSTALACION.md` §8 para los escenarios de despliegue).
+> **Dirección de la API:** en la GUI de escritorio, al arrancar se muestra un **diálogo de
+> URL** (`url_dialog.py`) en el que se escribe la dirección de la API (local, IP de la red o
+> dominio). El diálogo arranca precargado con la última URL usada y con el valor del campo
+> `api.url` de `cje_api/config.json` (o de `CJE_API_URL` si está definida); la GUI guarda la
+> URL elegida en el almacén local (`QSettings`, clave `conexion/url`) y la recuerda en los
+> siguientes arranques (ver `INSTALACION.md` §8 para los escenarios de despliegue).
 
 ---
 
@@ -39,8 +41,8 @@ responde `401`.
 
 1. **Obtener el token**: `POST /token/` con el flujo OAuth2 estándar (form con `username`
    y `password`). Respuesta: `{"access_token": "...", "token_type": "bearer"}`.
-   Credenciales por defecto de desarrollo: `admin` / `admin123` (configurables con
-   `CJE_API_USER` y `CJE_API_PASSWORD`).
+   Las credenciales se definen en `config.json` (sección `auth`, o con `CJE_API_USER` y
+   `CJE_API_PASSWORD`); **no hay credenciales por defecto hardcodeadas**.
 2. **Enviarlo en cada petición**: header `Authorization: Bearer <token>`.
 3. **Expiración**: el token caduca (por defecto 1440 min = 24 h, configurable con
    `CJE_TOKEN_EXPIRE_MINUTES`). Ante un `401` con token expirado, volver a obtener el token
@@ -54,7 +56,7 @@ Ejemplo con `curl`:
 # 1) Obtener token
 curl -X POST http://127.0.0.1:8000/token/ \
      -H "Content-Type: application/x-www-form-urlencoded" \
-     -d "username=admin&password=admin123"
+     -d "username=TU_USUARIO&password=TU_PASSWORD"
 
 # 2) Usar el token
 curl http://127.0.0.1:8000/clientes -H "Authorization: Bearer <token>"
@@ -75,10 +77,10 @@ Ejemplos por módulo:
 
 | Módulo | Claves principales |
 |---|---|
-| Fletes | `ID_FLETE`, `FECHA`, `PROVEEDOR`, `SHEPING`, `NOMBRE_CURRIER`, `VIA`, `PRECIO_CURRIER`, `CANTIDAD`, `TOTAL_FLETE` |
+| Fletes | `ID_FLETE`, `FECHA`, `PROVEEDOR`, `SHEPING`, `NOMBRE_CURRIER`, `VIA`, `PRECIO_CURRIER`, `CANTIDAD`, `TOTAL_FLETE` (+ lectura: `CANTIDAD_ASIGNADA`, `CANTIDAD_DISPONIBLE`) |
 | Clientes | `CEDULA`, `NOMBRE`, `CORREO`, `TELEFONO`, `SALDO` |
 | Catálogo | `ID_CATALOGO`, `NOMBRE`, `MARCA`, `PRESENTACION` |
-| Inventario | `ID_INVENTARIO`, `ID_CATALOGO`, `CANTIDA`, `ID_LOTE`, `PRECIO_UNITARIO`, `COSTO_UNITARIO`, `GANACIA`, `PRECIO_VENTA` (+ lectura: `NOMBRE`, `MARCA`, `PRESENTACION` del catálogo) |
+| Inventario | `ID_INVENTARIO`, `ID_CATALOGO`, `CANTIDA`, `CANTIDAD_ASIGNADA`, `ID_LOTE`, `PRECIO_UNITARIO`, `COSTO_UNITARIO`, `GANACIA`, `PRECIO_VENTA` (+ lectura: `NOMBRE`, `MARCA`, `PRESENTACION` del catálogo) |
 | Ventas | `ID_VENTA`, `FECHA`, `CEDULA`, `PRECIO`, `TIPO_PAGO`, `FORMA_DE_PAGO`, `PAGO`, `detalles` |
 | Detalle de venta | `ID_DETALLE`, `ID_INVENTARIO`, `CANTIDAD`, `NOMBRE_PRODUCTO`, `PRECIO_UNITARIO`, `SUBTOTAL` |
 | Abonos | `ID_ABONO`, `FECHA`, `CEDULA`, `CANTIDAD` (+ lectura: `NOMBRE_CLIENTE` del cliente) |
@@ -121,6 +123,8 @@ editarlos**; se recalculan automáticamente en cada operación.
 | `PRECIO_VENTA` | `round(COSTO_UNITARIO / (1 - GANACIA/100), 2)` |
 | `NOMBRE_CLIENTE` | Nombre resuelto desde Cliente (solo lectura) |
 | `NOMBRE_PRODUCTO` | Nombre resuelto desde Catálogo (solo lectura) |
+| `CANTIDAD_ASIGNADA` | Suma de `CANTIDAD_ASIGNADA` del inventario del flete (solo lectura en fletes; **editable** en inventario, ver §6.1) |
+| `CANTIDAD_DISPONIBLE` | `max(0, FLETE.CANTIDAD - CANTIDAD_ASIGNADA)` (solo lectura, en fletes) |
 
 > **Precios en centavos:** los importes son monetarios y la API los **redondea a 2
 > decimales** antes de guardarlos (`COSTO_UNITARIO` y `PRECIO_VENTA`). Así el precio que se
@@ -182,6 +186,19 @@ separador decimal, sin importar la configuración regional del dispositivo.
 
 - **El lote (`ID_LOTE`) es obligatorio.** No se puede crear ni guardar inventario sin
   lote, ni quitarle el lote a un ítem existente.
+- **Cantidad asignada vs stock.** Al crear un ítem de inventario se pide la **cantidad
+  asignada (original)** (`CANTIDAD_ASIGNADA`): cuántas unidades de ese flete se compraron
+  para este producto. La API iguala `CANTIDA` (stock actual) a ese valor. Las ventas
+  posteriores **descuentan `CANTIDA` pero no `CANTIDAD_ASIGNADA`**, que representa la
+  cantidad original comprada. El campo stock (`CANTIDA`) no se muestra al crear (lo fija la
+  API); sí es editable al editar el ítem.
+- **Cupo del flete (regla obligatoria).** La suma de `CANTIDAD_ASIGNADA` de todos los
+  ítems de un flete **no puede superar `FLETE.CANTIDAD`**. Al crear o al corregir la
+  cantidad asignada de un ítem, la API valida el cupo y responde `400` si se excede (el
+  `detail` indica cuánto trajo el flete, cuánto ya está asignado y cuánto queda). La
+  interfaz **debe** advertir el cupo disponible en el formulario (ej. el selector de lote
+  muestra "queda N" y la vista previa avisa antes de guardar) y respetar el rechazo del
+  servidor.
 - En los formularios, el campo lote **no debe ofrecer una opción "sin lote"/"ninguno"**.
   Si la lista de fletes está vacía, el campo no podrá completarse y no se debe permitir
   guardar.
@@ -305,6 +322,17 @@ El formulario de venta es el proceso más delicado; combina cliente, stock, prec
   confirmación** y la API rechazará la operación con `400` si hay dependencias. Mostrar
   ese mensaje tal cual.
 
+### 6.6 Fletes
+
+- La tabla de fletes muestra, además de los campos del flete, dos columnas de **solo
+  lectura**: **Asignado** (`CANTIDAD_ASIGNADA`, suma de las cantidades asignadas de los
+  ítems de inventario del flete) y **Disponible** (`CANTIDAD_DISPONIBLE` = `CANTIDAD −
+  asignado`, mínimo 0). No se editan: las calcula la API.
+- Al **editar un flete no se puede reducir `CANTIDAD` por debajo de lo ya asignado** en
+  inventario: la API responde `400` con el detalle ("ya hay N perfume(s) asignados"). La
+  interfaz debe respetar ese rechazo.
+- `TOTAL_FLETE` lo calcula la BD y no es editable.
+
 ---
 
 ## 7. Manejo de errores y estado de la interfaz
@@ -406,7 +434,7 @@ obligatorias).
 ```json
 {
   "ID_CATALOGO": 1,
-  "CANTIDA": 30,
+  "CANTIDAD_ASIGNADA": 30,
   "ID_LOTE": 1,
   "PRECIO_UNITARIO": 8.50,
   "GANACIA": 33.3
@@ -414,6 +442,11 @@ obligatorias).
 ```
 
 > `ID_LOTE` nunca va en `null`.
+>
+> `CANTIDAD_ASIGNADA` es la cantidad original comprada del flete para este producto; la API
+> iguala `CANTIDA` (stock) a ese valor y valida el cupo del flete (la suma de asignadas de
+> todos los ítems del flete no puede superar `FLETE.CANTIDAD`). El campo legado `CANTIDA`
+> sigue aceptándose como cantidad asignada si no se envía `CANTIDAD_ASIGNADA`.
 
 ### Crear venta — `POST /ventas/`
 
@@ -492,3 +525,7 @@ Antes de dar por terminada una interfaz, comprobar al menos:
     ventana **sigue respondiendo** (se puede mover, repintar y no muestra el "No responde"
     del sistema). Verificar que los botones que disparan la operación se deshabilitan
     mientras esta corre y que los datos se actualizan al llegar la respuesta.
+12. **Cupo del flete en inventario**: crear un ítem cuya cantidad asignada exceda el cupo
+    del flete devuelve `400` con el detalle ("trajo X, asignados Y, quedan Z") y la interfaz
+    lo muestra; no se guarda. Al editar un flete, reducir `CANTIDAD` por debajo de lo
+    asignado también es rechazado con `400`.

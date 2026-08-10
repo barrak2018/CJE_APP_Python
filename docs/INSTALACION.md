@@ -65,6 +65,16 @@ O copiar el contenido de `SQL/CJE.sql` y ejecutarlo dentro de la consola `psql`.
 >     ADD COLUMN IF NOT EXISTS "PRECIO_UNITARIO" double precision;
 > ```
 
+> **Bases ya existentes (cantidad asignada):** si la BD se creó antes de que existiera la
+> cantidad asignada por flete, ejecutar la migración `SQL/migracion_cantidad_asignada.sql`
+> (o su equivalente manual). Agrega `INVENTARIO.CANTIDAD_ASIGNADA` y rellena las filas
+> existentes con `CANTIDA + Σ(DETALLES_VENTAS.CANTIDAD)` (la cantidad original comprada),
+> de modo que las ventas previas no se pierdan:
+>
+> ```bash
+> psql -U postgres -d CJE -f SQL/migracion_cantidad_asignada.sql
+> ```
+
 > **Base de datos:** el token JWT protege el acceso a los **datos vía la API**, pero no
 > el acceso directo a PostgreSQL (psql/pgAdmin). Para proteger ese acceso se recomienda
 > usar un rol dedicado con contraseña fuerte y limitar `listen_addresses` en el servidor.
@@ -93,7 +103,7 @@ source cje_venv/bin/activate
 Con el entorno virtual activado:
 
 ```bash
-pip install fastapi uvicorn sqlalchemy psycopg2-binary python-jose[cryptography] python-multipart
+pip install -r requirements.txt
 ```
 
 | Paquete | Propósito |
@@ -104,17 +114,10 @@ pip install fastapi uvicorn sqlalchemy psycopg2-binary python-jose[cryptography]
 | `psycopg2-binary` | Driver de conexión Python ↔ PostgreSQL |
 | `python-jose[cryptography]` | Generación y validación de tokens JWT (autenticación) |
 | `python-multipart` | Soporte del formulario OAuth2 de login (`POST /token/`) |
+| `PySide6` | Framework Qt para la GUI de escritorio |
+| `requests` | Cliente HTTP que la GUI usa para llamar a la API |
 
-> Si también se usará la **GUI de escritorio**, instalar además:
->
-> ```bash
-> pip install PySide6 requests
-> ```
->
-> | Paquete | Propósito |
-> |---|---|
-> | `PySide6` | Framework Qt para la GUI |
-> | `requests` | Cliente HTTP que la GUI usa para llamar a la API |
+> Las versiones están fijadas en `requirements.txt` (las probadas en el entorno de desarrollo).
 
 ---
 
@@ -133,15 +136,15 @@ Contenido del archivo:
 {
   "database": {
     "user": "postgres",
-    "password": "Strider-1",
+    "password": "cambiar",
     "host": "localhost",
     "port": 5432,
     "name": "CJE"
   },
   "auth": {
     "api_user": "admin",
-    "api_password": "admin123",
-    "secret_key": "dev-secret-cambiar-en-produccion",
+    "api_password": "cambiar",
+    "secret_key": "generar-clave-aleatoria",
     "token_expire_minutes": 1440
   },
   "api": {
@@ -153,11 +156,20 @@ Contenido del archivo:
 }
 ```
 
+> **Los secretos no tienen valores por defecto.** `database.password`, `auth.api_password`
+> y `auth.secret_key` son obligatorios: si faltan o quedan como `"cambiar"` /
+> `"generar-clave-aleatoria"`, la API **se niega a arrancar** con un mensaje claro. Para
+> generar la clave JWT:
+>
+> ```bash
+> python -c "import secrets; print(secrets.token_hex(32))"
+> ```
+
 | Sección | Qué define |
 |---|---|
 | `database` | Conexión a PostgreSQL (usuario, contraseña, host, puerto, nombre de BD) |
 | `auth` | Credenciales del usuario único de la API, clave de firma del JWT y expiración del token (minutos) |
-| `api` | `host`/`port`/`reload` con los que `iniciar_servidor.ps1` lanza uvicorn, y `url` (dirección que la GUI usa para llamar a la API) |
+| `api` | `host`/`port`/`reload` con los que la TUI lanza uvicorn, y `url` (dirección que la GUI usa para llamar a la API) |
 
 **Precedencia (de menor a mayor):** valores por defecto < `config.json` < variables de
 entorno. Las variables de entorno (`CJE_DB_*`, `CJE_API_USER`, `CJE_API_PASSWORD`,
@@ -170,11 +182,12 @@ la variable `CJE_CONFIG`:
 ```bash
 # config.dev.json / config.prod.json ...
 $env:CJE_CONFIG = "C:\ruta\config.prod.json"
-.\iniciar_servidor.ps1
+.\cje_venv\Scripts\python.exe cje_tui.py
 ```
 
-> Si `config.json` no existe o el JSON está malformado, la API arranca igual con valores
-> por defecto (solo para desarrollo) y lo avisa por consola.
+> Si `config.json` no existe o el JSON está malformado, la API **no arranca**: los secretos
+> obligatorios (contraseña de la BD, credenciales de la API y clave JWT) no pueden quedar en
+> blanco ni como placeholder. El error en consola indica exactamente qué falta.
 
 > **Seguridad:** `config.json` contiene secretos (contraseña de la BD, credenciales de la
 > API, clave JWT). No debe compartirse ni versionarse (ver `.gitignore`). Para producción
@@ -184,11 +197,12 @@ $env:CJE_CONFIG = "C:\ruta\config.prod.json"
 
 ## 6. Paso 5 — Ejecutar la API
 
-Desde la raíz del proyecto, ejecutar el script de inicio (lee `host`, `port` y `reload`
-de `cje_api/config.json` y define las credenciales de la API si no existen):
+Desde la raíz del proyecto, usar el **centro de control (TUI)** con la opción
+`1. Iniciar servidor API` (lee `host`, `port` y `reload` de `cje_api/config.json`
+y define las credenciales de la API si no existen):
 
 ```powershell
-.\iniciar_servidor.ps1
+.\cje_venv\Scripts\python.exe cje_tui.py
 ```
 
 Equivalente manual, estando en `cje_api/` con el entorno virtual activado:
@@ -233,12 +247,13 @@ Respuesta esperada:
 {"database": "Conexión exitosa a PostgreSQL"}
 ```
 
-3. Obtener un token de acceso (credenciales de desarrollo `admin` / `admin123`):
+3. Obtener un token de acceso con el usuario y contraseña definidos en `config.json`
+   (sección `auth`):
 
 ```bash
 curl -X POST http://127.0.0.1:8000/token/ \
      -H "Content-Type: application/x-www-form-urlencoded" \
-     -d "username=admin&password=admin123"
+     -d "username=TU_USUARIO&password=TU_PASSWORD"
 ```
 
 Respuesta esperada:
@@ -267,15 +282,18 @@ http://127.0.0.1:8000/docs
 ## 8. Despliegue y puesta en marcha por escenario
 
 El mismo `config.json` adapta la puesta en marcha a cada escenario. Cambiar los valores y
-reiniciar la API; la GUI usa `api.url` para saber dónde está la API.
+reiniciar la API. La GUI, al arrancar, **muestra un diálogo donde se escribe la URL de la
+API** (precargado con `api.url` / `CJE_API_URL` y con la última URL usada) y la recuerda en
+`QSettings` (`conexion/url`); así cada PC puede apuntar a su servidor sin recompilar.
 
 ### Escenario A — Todo en una sola PC (por defecto)
 
 API + PostgreSQL + GUI en el mismo equipo. No requiere cambios: el `config.json` ya trae
 `host: "127.0.0.1"` y `url: "http://127.0.0.1:8000"`.
 
-1. `.\iniciar_servidor.ps1` (API en `http://127.0.0.1:8000`).
-2. `.\iniciar_gui.ps1` → la GUI encuentra la API sola y pide iniciar sesión.
+1. `.\cje_venv\Scripts\python.exe cje_tui.py` → opción `1` (API en `http://127.0.0.1:8000`).
+2. Opción `3` (Iniciar GUI) → la GUI pide la URL de la API (con `http://127.0.0.1:8000`
+   sugerido) y luego inicia sesión.
 
 ### Escenario B — Red local (API en un servidor, GUI en otras PCs)
 
@@ -285,9 +303,10 @@ API + PostgreSQL + GUI en el mismo equipo. No requiere cambios: el `config.json`
    - `api.url`: `"http://<IP_del_servidor>:8000"` (la IP por la que las otras PCs lo alcanzan).
 2. Abrir el puerto (firewall del servidor) para el puerto de `api.port`.
 3. En **cada** PC con GUI: copiar el `cje_api/config.json` (o definir
-   `CJE_API_URL=http://<IP>:8000` como variable de entorno) para que la GUI apunte al
-   servidor. Las credenciales que recuerda la GUI se guardan localmente en esa PC.
-4. Arrancar el servidor con `.\iniciar_servidor.ps1`.
+   `CJE_API_URL=http://<IP>:8000` como variable de entorno) para precargar la URL en el
+   diálogo de arranque, o escribirla directamente al abrir la GUI. Las credenciales que
+   recuerda la GUI se guardan localmente en esa PC.
+4. Arrancar el servidor con la TUI: `.\cje_venv\Scripts\python.exe cje_tui.py` → opción `1`.
 
 > La base de datos se consulta solo desde el servidor de la API; las GUI nunca tocan
 > PostgreSQL directamente.
@@ -309,7 +328,7 @@ Mínimos obligatorios antes de exponer la API:
 
 ```powershell
 $env:CJE_CONFIG = "C:\ruta\config.prod.json"
-.\iniciar_servidor.ps1
+.\cje_venv\Scripts\python.exe cje_tui.py
 ```
 
 ### Resumen de decisiones por escenario
@@ -330,6 +349,8 @@ $env:CJE_CONFIG = "C:\ruta\config.prod.json"
 ```
 CJE_APP_Python/
 ├── .gitignore
+├── requirements.txt        # Dependencias (API + GUI), versiones fijadas
+├── cje_tui.py              # Centro de control: API/GUI/túnel (solo stdlib)
 ├── cje_api/
 │   ├── config.json         # Configuración (BD, auth, API) — no versionar
 │   ├── config.example.json # Plantilla sin secretos — versionar
@@ -341,9 +362,10 @@ CJE_APP_Python/
 │   ├── schemas/            # Esquemas Pydantic (validación)
 │   └── routers/            # Endpoints por módulo (auth.py = POST /token)
 ├── cje_gui/
-│   ├── main.py             # Punto de entrada de la GUI (login + credenciales recordadas)
+│   ├── main.py             # Punto de entrada de la GUI (URL + login + credenciales recordadas)
 │   ├── config.py           # Loader de api.url para la GUI
 │   ├── api_client.py       # Cliente HTTP (login/logout y re-login automático)
+│   ├── url_dialog.py       # Diálogo de URL de la API al arrancar (recuerda la última)
 │   ├── login_dialog.py     # Diálogo de inicio de sesión
 │   ├── dialogs.py          # FormDialog + DecimalSpinBox + parse_decimal
 │   ├── cliente_search.py   # SearchBox genérico + ClienteSearchBox + CatalogoSearchBox
@@ -351,20 +373,25 @@ CJE_APP_Python/
 │   ├── main_window.py      # Ventana principal con pestañas y barra de "Cerrar sesión"
 │   └── __init__.py         # Marca el paquete de la GUI
 ├── SQL/
-│   └── CJE.sql             # Script de creación de la BD
+│   ├── CJE.sql             # Script de creación de la BD
+│   └── migracion_cantidad_asignada.sql  # Migración de INVENTARIO.CANTIDAD_ASIGNADA
 └── docs/
     ├── README.md          # Referencia de la API
     ├── FLUJO_DATOS.md     # Procesos y flujos
     ├── LOGICA_NEGOCIO.md  # Reglas de negocio
     ├── INSTALACION.md     # Esta guía
-    └── GUIA_GUI.md        # Normas para interfaces que usen la API (cualquier tecnología)
+    ├── GUIA_GUI.md        # Normas para interfaces que usen la API (cualquier tecnología)
+    ├── BUGS_Y_SOLUCIONES.md  # Problemas encontrados y soluciones
+    └── ingenieria/
+        └── REPLICACION_GUI.md  # Guía maestra para replicar la GUI
 ```
 
 ### Ejecutar la GUI de escritorio
 
-Con la API corriendo (paso 5), la GUI se abre con el script `iniciar_gui.ps1`. Usa
-`api.url` de `cje_api/config.json` (o `CJE_API_URL` si está definida) para localizar la
-API, por lo que funciona igual en local, en red o contra un servidor remoto (ver §8).
+Con la API corriendo (paso 5), la GUI se abre desde la TUI (opción `3`). Al arrancar pide
+la **URL de la API** (diálogo precargado con `api.url` de `cje_api/config.json`, o
+`CJE_API_URL` si está definida, y con la última URL usada; la URL elegida se recuerda en
+`QSettings`). Así funciona igual en local, en red o contra un servidor remoto (ver §8).
 
 ```bash
 cd cje_gui
@@ -418,12 +445,13 @@ psql -U postgres -d CJE -f SQL/CJE.sql
 # 2. Entorno virtual + dependencias
 python -m venv cje_venv
 cje_venv\Scripts\activate
-pip install fastapi uvicorn sqlalchemy psycopg2-binary python-jose[cryptography] python-multipart PySide6 requests
+pip install -r requirements.txt
 
 # 3. Configuración
-copy cje_api\config.example.json cje_api\config.json   # y editar con los datos reales
+copy cje_api\config.example.json cje_api\config.json   # y editar los secretos reales (BD, API, clave JWT)
 
-# 4. Ejecutar (lee config.json)
-.\iniciar_servidor.ps1
-.\iniciar_gui.ps1
+# 4. Ejecutar (lee config.json) — centro de control TUI:
+#    1=iniciar API, 2=detener API, 3=iniciar GUI, 4=iniciar túnel,
+#    5=detener túnel, 6=GUI por túnel, 7=estado
+.\cje_venv\Scripts\python.exe cje_tui.py
 ```

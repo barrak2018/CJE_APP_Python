@@ -29,22 +29,25 @@ Cada entrada sigue el mismo formato:
 8. [Refrescos asíncronos solapados o pisando la tabla](#8-refrescos-asíncronos-solapados-o-pisando-la-tabla)
 9. [El detalle de cliente se vaciaba si fallaba un endpoint](#9-el-detalle-de-cliente-se-vaciaba-si-fallaba-un-endpoint)
 10. [El buscador de cliente reabría el detalle tras seleccionar](#10-el-buscador-de-cliente-reabría-el-detalle-tras-seleccionar)
+11. [La vista previa de precio de la GUI mostraba un valor distinto al guardado](#11-la-vista-previa-de-precio-de-la-gui-mostraba-un-valor-distinto-al-guardado)
 
 **API (cje_api)**
-11. [Precios con decimales largos ($59.99)](#11-precios-con-decimales-largos-5999)
-12. [Patrón N+1 en listados de ventas y abonos](#12-patrón-n1-en-listados-de-ventas-y-abonos)
-13. [Editar una venta duplicaba stock o saldo](#13-editar-una-venta-duplicaba-stock-o-saldo)
-14. [Editar/eliminar un abono no revertía el saldo](#14-editar-eliminar-un-abono-no-revertía-el-saldo)
-15. [`VIA` en minúsculas fallaba la validación](#15-via-en-minúsculas-fallaba-la-validación)
-16. [Ganancia ≥ 100 y división por cero en `TOTAL_FLETE`](#16-ganancia--100-y-división-por-cero-en-total_flete)
-17. [`ID_LOTE` nulo rompía la integridad del inventario](#17-id_lote-nulo-rompía-la-integridad-del-inventario)
-18. [`TOTAL_FLETE` no debe escribirse desde la app](#18-total_flete-no-debe-escribirse-desde-la-app)
+12. [Precios con decimales largos ($59.99)](#12-precios-con-decimales-largos-5999)
+13. [Patrón N+1 en listados de ventas y abonos](#13-patrón-n1-en-listados-de-ventas-y-abonos)
+14. [Editar una venta duplicaba stock o saldo](#14-editar-una-venta-duplicaba-stock-o-saldo)
+15. [Editar/eliminar un abono no revertía el saldo](#15-editar-eliminar-un-abono-no-revertía-el-saldo)
+16. [`VIA` en minúsculas fallaba la validación](#16-via-en-minúsculas-fallaba-la-validación)
+17. [Ganancia ≥ 100 y división por cero en `TOTAL_FLETE`](#17-ganancia--100-y-división-por-cero-en-total_flete)
+18. [`ID_LOTE` nulo rompía la integridad del inventario](#18-id_lote-nulo-rompía-la-integridad-del-inventario)
+19. [`TOTAL_FLETE` no debe escribirse desde la app](#19-total_flete-no-debe-escribirse-desde-la-app)
+20. [Flete sin control de cupo asignado (sobre-asignación)](#20-flete-sin-control-de-cupo-asignado-sobre-asignación)
 
 **Base de datos / migración**
-19. [Bases creadas antes del precio por línea](#19-bases-creadas-antes-del-precio-por-línea)
+21. [Bases creadas antes del precio por línea](#21-bases-creadas-antes-del-precio-por-línea)
+22. [Bases sin la columna `CANTIDAD_ASIGNADA`](#22-bases-sin-la-columna-cantidad_asignada)
 
 **Pruebas / infraestructura**
-20. [Suite de pruebas GUI síncrona rota tras el refactor asíncrono](#20-suite-de-pruebas-gui-síncrona-rota-tras-el-refactor-asíncrono)
+23. [Suite de pruebas GUI síncrona rota tras el refactor asíncrono](#23-suite-de-pruebas-gui-síncrona-rota-tras-el-refactor-asíncrono)
 
 ---
 
@@ -140,8 +143,8 @@ Cada entrada sigue el mismo formato:
   `parse_decimal()`, que acepta punto o coma (si hay coma y punto, la coma es
   separador de miles; si solo hay coma, es decimal). `cje_gui/dialogs.py:9-17, 20-37`.
 - **Verificación:** reglas obligatorias documentadas en `docs/LOGICA_NEGOCIO.md`
-  y `docs/GUIA_GUI.md:101-117`; toda la GUI usa estos componentes (nunca `float()`
-  directo sobre texto).
+  ("Formato de números") y `docs/GUIA_GUI.md` §4; toda la GUI usa estos componentes
+  (nunca `float()` directo sobre texto).
 
 ### 7. Editar una venta rechazaba el stock de la propia venta
 
@@ -153,8 +156,8 @@ Cada entrada sigue el mismo formato:
   inventario).
 - **Solución:** en modo edición, el stock disponible de cada ítem suma la cantidad
   ya reservada por esta misma venta. `cje_gui/venta_dialog.py:240-247`.
-- **Verificación:** regla documentada en `docs/GUIA_GUI.md:409-411` y flujo
-  manual de edición de ventas.
+- **Verificación:** regla documentada en `docs/GUIA_GUI.md` §6.2 y flujo manual de
+  edición de ventas.
 
 ### 8. Refrescos asíncronos solapados o pisando la tabla
 
@@ -167,11 +170,11 @@ Cada entrada sigue el mismo formato:
   tabla sin restaurar la selección.
 - **Solución:**
   - Guarda `_refreshing`: si ya hay un refresco en curso, se descarta el nuevo
-    (`cje_gui/main_window.py:107-113`).
+    (`cje_gui/main_window.py:108-114`).
   - `_auto_refresh` se aborta si `QApplication.activeModalWidget()` no es `None`
-    (`cje_gui/main_window.py:59-65`).
+    (`cje_gui/main_window.py:61-66`).
   - `_restore_selection()` vuelve a seleccionar la fila que tenía el PK elegido
-    (`cje_gui/main_window.py:147-155`).
+    (`cje_gui/main_window.py:149-156`).
 - **Verificación:** uso continuo con auto-refresh activo; suites 13/13 y 23/23.
 
 ### 9. El detalle de cliente se vaciaba si fallaba un endpoint
@@ -183,7 +186,7 @@ Cada entrada sigue el mismo formato:
 - **Solución:** en `ClienteDetalleDialog._load` las compras y los abonos se cargan
   con `try/except` independientes y los errores se notifican por separado, de modo
   que un endpoint caído no vacía la vista completa.
-  `cje_gui/main_window.py:477-514`.
+  `cje_gui/main_window.py:545-581`.
 - **Verificación:** simular fallo de un endpoint (API parcialmente caída) y abrir
   el detalle.
 
@@ -195,15 +198,29 @@ Cada entrada sigue el mismo formato:
 - **Causa raíz:** el texto del buscador no se limpiaba tras la selección, así que
   las notificaciones de cambio podían re-ejecutar el handler.
 - **Solución:** tras mostrar el detalle, se limpia el buscador
-  (`self.search_cliente.clear()`). `cje_gui/main_window.py:660-662`.
+  (`self.search_cliente.clear()`). `cje_gui/main_window.py:728`.
 - **Verificación:** seleccionar un cliente y esperar un auto-refresh: el detalle
   no se reabre.
+
+### 11. La vista previa de precio de la GUI mostraba un valor distinto al guardado
+
+- **Síntoma:** en el formulario de inventario, la vista previa "P. venta estimado"
+  podía mostrar un precio distinto (por centavos) al que luego guardaba la API.
+- **Causa raíz:** la vista previa calculaba `precio_venta = costo / (1 − GANACIA/100)`
+  usando el costo **sin redondear**, mientras que la API (y la regla de negocio) redondea
+  primero el costo a 2 decimales y luego el precio de venta.
+- **Solución:** la vista previa replica exactamente el cálculo de la API:
+  `costo = round(precio_unitario + TOTAL_FLETE, 2)` y
+  `pv = round(costo / (1 − ganancia/100), 2)`.
+  `cje_gui/main_window.py:427-428`.
+- **Verificación:** verificado de extremo a extremo (ej. 6.10 + 5.092906 con 44.03% de
+  ganancia → $19.99 igual en la GUI, en la API y en la BD).
 
 ---
 
 ## API (cje_api)
 
-### 11. Precios con decimales largos ($59.99)
+### 12. Precios con decimales largos ($59.99)
 
 - **Síntoma:** los precios y totales mostraban decimales largos de coma flotante;
   por ejemplo, `$30.00 × 2` podía dar `$59.99...` en lugar de `$60.00`.
@@ -213,11 +230,11 @@ Cada entrada sigue el mismo formato:
   (`cje_api/routers/inventario.py:26, 35`) y el `PRECIO` de la venta también se
   redondea a 2 decimales cuando se calcula automáticamente
   (`cje_api/routers/venta.py:166, 289`).
-- **Verificación:** reglas en `docs/LOGICA_NEGOCIO.md:23-25` y
-  `docs/GUIA_GUI.md:85-88`; ejemplos en la documentación de la API
+- **Verificación:** reglas en `docs/LOGICA_NEGOCIO.md` §3 y `docs/GUIA_GUI.md` §3;
+  ejemplos en la documentación de la API
   (`$30.00 × 2 = $60.00`).
 
-### 12. Patrón N+1 en listados de ventas y abonos
+### 13. Patrón N+1 en listados de ventas y abonos
 
 - **Síntoma:** listar ventas (o abonos) con muchas filas generaba decenas de
   consultas extra: por cada venta se consultaban cliente, detalles, inventario y
@@ -230,7 +247,7 @@ Cada entrada sigue el mismo formato:
 - **Verificación:** comentarios "(path batch sin N+1)" en `tests/test_cje.py` y
   verificación visual del `pgAdmin`/logs al listar.
 
-### 13. Editar una venta duplicaba stock o saldo
+### 14. Editar una venta duplicaba stock o saldo
 
 - **Síntoma:** al editar una venta, el stock y el saldo del cliente se aplicaban
   de nuevo sin revertir los valores originales, **contando dos veces** el efecto.
@@ -245,7 +262,7 @@ Cada entrada sigue el mismo formato:
 - **Verificación:** pruebas PUT y DELETE de ventas (los totales de stock/saldo se
   recomponen exactamente tras editar o eliminar).
 
-### 14. Editar/eliminar un abono no revertía el saldo
+### 15. Editar/eliminar un abono no revertía el saldo
 
 - **Síntoma:** editar o borrar un abono dejaba el saldo del cliente sin corregir
   (el efecto del abono original no se deshacía).
@@ -257,7 +274,7 @@ Cada entrada sigue el mismo formato:
   (`SALDO += CANTIDAD`). `cje_api/routers/abono.py:97-140, 143-162`.
 - **Verificación:** pruebas PUT y DELETE de abonos verificando el saldo resultante.
 
-### 15. `VIA` en minúsculas fallaba la validación
+### 16. `VIA` en minúsculas fallaba la validación
 
 - **Síntoma:** enviar `"m"` o `"a"` (minúsculas) en `VIA` fallaba contra la columna
   `CHAR` o el `pattern` de Pydantic, aunque el usuario escribía en minúsculas.
@@ -267,7 +284,7 @@ Cada entrada sigue el mismo formato:
   guardar. `cje_api/routers/flete.py:21, 66`.
 - **Verificación:** crear/editar fletes con `via: "m"` y `"a"` → guardan como `"M"`/`"A"`.
 
-### 16. Ganancia ≥ 100 y división por cero en `TOTAL_FLETE`
+### 17. Ganancia ≥ 100 y división por cero en `TOTAL_FLETE`
 
 - **Síntoma:** un `GANACIA = 100` producía división por cero en el cálculo de
   `PRECIO_VENTA` (o precios absurdos); y `CANTIDAD = 0` rompía la fórmula del
@@ -283,7 +300,7 @@ Cada entrada sigue el mismo formato:
 - **Verificación:** intentar crear inventario con `GANACIA = 100` → 400; flete con
   `CANTIDAD = 0` → 422.
 
-### 17. `ID_LOTE` nulo rompía la integridad del inventario
+### 18. `ID_LOTE` nulo rompía la integridad del inventario
 
 - **Síntoma:** se podía guardar un ítem de inventario sin lote asociado, dejando
   datos huérfanos y precios calculados sin flete.
@@ -295,7 +312,7 @@ Cada entrada sigue el mismo formato:
 - **Verificación:** `PUT` con `"ID_LOTE": null` → 400; el resto de actualizaciones
   siguen funcionando.
 
-### 18. `TOTAL_FLETE` no debe escribirse desde la app
+### 19. `TOTAL_FLETE` no debe escribirse desde la app
 
 - **Síntoma:** al crear o editar un flete, la app podía intentar escribir
   `TOTAL_FLETE`, que en realidad es una **columna generada por PostgreSQL**
@@ -305,28 +322,61 @@ Cada entrada sigue el mismo formato:
   que la app jamás intente escribirlo. `cje_api/models/flete.py:15-16`.
 - **Verificación:** crear y editar fletes sin errores de la columna generada.
 
+### 20. Flete sin control de cupo asignado (sobre-asignación)
+
+- **Síntoma:** la suma de las cantidades de los ítems de inventario de un flete podía
+  superar la `CANTIDAD` traída por el flete: no había forma de saber cuánto se había
+  asignado ya, y al vender, `CANTIDA` bajaba sin conservar la cantidad original comprada.
+- **Causa raíz:** el inventario solo tenía `CANTIDA` (stock actual), que las ventas
+  descuentan; no existía una "cantidad original" ni una validación de cupo por flete.
+- **Solución:** se agrega `INVENTARIO.CANTIDAD_ASIGNADA` (cantidad original comprada; se
+  fija al crear y **no cambia al vender**). La API:
+  - valida al crear/corregir que `Σ CANTIDAD_ASIGNADA` del flete no supere
+    `FLETE.CANTIDAD` → `400` con detalle "trajo X, asignados Y, quedan Z"
+    (`cje_api/routers/inventario.py:41-69, 86`);
+  - expone en los fletes `CANTIDAD_ASIGNADA` y `CANTIDAD_DISPONIBLE`
+    (`cje_api/routers/flete.py:16-38`);
+  - no permite reducir la `CANTIDAD` de un flete por debajo de lo asignado
+    (`cje_api/routers/flete.py:101-111`).
+- **Verificación:** pruebas contra la API (exceder el cupo → `400`; tras una venta,
+  `CANTIDA` baja y `CANTIDAD_ASIGNADA` se mantiene); suite `tests/test_cje.py` 14/14.
+
 ---
 
 ## Base de datos / migración
 
-### 19. Bases creadas antes del precio por línea
+### 21. Bases creadas antes del precio por línea
 
 - **Síntoma:** en bases de datos creadas con versiones anteriores del script,
   el campo `DETALLES_VENTAS.PRECIO_UNITARIO` no existía y al crear una venta con
   precio por línea fallaba.
 - **Causa raíz:** el precio por línea (`PRECIO_UNITARIO` en detalle) se añadió al
   esquema en una fase posterior; las BD existentes quedaban sin la columna.
-- **Solución:** migración ad-hoc documentada en `docs/INSTALACION.md:58-65`:
+- **Solución:** migración ad-hoc documentada en `docs/INSTALACION.md` §2:
   `ALTER TABLE public."DETALLES_VENTAS" ADD COLUMN IF NOT EXISTS "PRECIO_UNITARIO"
   double precision;`.
 - **Verificación:** ejecutar la migración sobre una BD antigua y crear ventas con
   precio por línea.
 
+### 22. Bases sin la columna `CANTIDAD_ASIGNADA`
+
+- **Síntoma:** en bases de datos creadas antes de la cantidad asignada, el campo
+  `INVENTARIO.CANTIDAD_ASIGNADA` no existía y al crear inventario con cantidad asignada
+  fallaba.
+- **Causa raíz:** la cantidad asignada por flete se añadió al esquema en una fase
+  posterior; las BD existentes quedaban sin la columna y sin el backfill.
+- **Solución:** migración ad-hoc documentada en `docs/INSTALACION.md` (§2) y en
+  `SQL/migracion_cantidad_asignada.sql`. Agrega la columna y rellena las filas existentes
+  con `CANTIDA + Σ(DETALLES_VENTAS.CANTIDAD)`, de modo que las ventas previas se
+  conservan como cantidad original (los `ID_INVENTARIO` vendidos se suman por grupo).
+- **Verificación:** ejecutar la migración sobre una BD antigua y comprobar los valores
+  asignados por flete; crear inventario nuevo con `CANTIDAD_ASIGNADA`.
+
 ---
 
 ## Pruebas / infraestructura
 
-### 20. Suite de pruebas GUI síncrona rota tras el refactor asíncrono
+### 23. Suite de pruebas GUI síncrona rota tras el refactor asíncrono
 
 - **Síntoma:** tras refactorizar la GUI a llamadas asíncronas (`run_async`), las
   pruebas que llamaban a los handlers de forma síncrona colgaban o fallaban

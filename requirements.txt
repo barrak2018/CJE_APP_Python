@@ -1,0 +1,15 @@
+# Dependencias de CJE Perfumes (API + GUI).
+# Instalar con:  pip install -r requirements.txt
+# Versiones probadas en el entorno virtual del proyecto (cje_venv).
+
+# --- Backend (FastAPI) ---
+fastapi==0.141.1
+uvicorn==0.52.1
+sqlalchemy==2.0.51
+psycopg2-binary==2.9.12
+python-jose[cryptography]==3.5.0
+python-multipart==0.0.32
+
+# --- GUI de escritorio (PySide6) ---
+PySide6==6.11.1
+requests==2.34.2

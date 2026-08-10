@@ -62,11 +62,12 @@
 │               │ ID_CATALOGO  ──── FK → CATALOGO     │
 │               │ ID_LOTE      ──── FK → FLETE        │
 │               │ CANTIDA                              │
-       │               │ PRECIO_UNITARIO                      │
-       │               │ COSTO_UNITARIO (calculado*)          │
-       │               │ GANACIA                              │
-       │               │ PRECIO_VENTA   (calculado*)          │
-       │               └─────────────────────────────────────┘
+│               │ CANTIDAD_ASIGNADA                    │
+│               │ PRECIO_UNITARIO                      │
+│               │ COSTO_UNITARIO (calculado*)          │
+│               │ GANACIA                              │
+│               │ PRECIO_VENTA   (calculado*)          │
+│               └─────────────────────────────────────┘
        │
        │ FK
 ┌──────▼────────┐       ┌──────────────────┐
@@ -97,6 +98,8 @@
 | `TOTAL_FLETE` | FLETE | `(SHEPING + PRECIO_CURRIER) / NULLIF(CANTIDAD, 0)` (columna STORED, `real`) |
 | `COSTO_UNITARIO` | INVENTARIO | `round(PRECIO_UNITARIO + TOTAL_FLETE_del_lote, 2)` |
 | `PRECIO_VENTA` | INVENTARIO | `round(COSTO_UNITARIO / (1 - GANACIA/100), 2)` |
+| `CANTIDAD_ASIGNADA` | INVENTARIO | Cantidad original comprada del flete. Se fija al crear; **no cambia al vender**. En las respuestas de FLETE es la **suma** de las de sus ítems de inventario (la calcula la API) |
+| `CANTIDAD_DISPONIBLE` | FLETE (respuesta) | `max(0, FLETE.CANTIDAD - CANTIDAD_ASIGNADA)`, cupo restante por asignar (lo calcula la API) |
 
 > **Precios en centavos:** `COSTO_UNITARIO` y `PRECIO_VENTA` los calcula la **API** (no la
 > BD) y se **redondean a 2 decimales**. Así el precio mostrado ($30.00) coincide con el
@@ -130,7 +133,9 @@
 ```
 1. GET /fletes/  →  SELECT * FROM FLETE OFFSET skip LIMIT limit
 2. GET /fletes/{id}  →  SELECT * FROM FLETE WHERE ID_FLETE = id
-3. Se serializa con FleteResponse y se retorna
+3. Se calcula CANTIDAD_ASIGNADA = Σ(INVENTARIO.CANTIDAD_ASIGNADA) del lote
+   y CANTIDAD_DISPONIBLE = max(0, CANTIDAD - asignada)  (agrupado con IN(...) en el listado)
+4. Se serializa con FleteResponse (incluye ambos campos) y se retorna
 ```
 
 ### Actualizar Flete
@@ -138,9 +143,11 @@
 ```
 1. PUT /fletes/{id} con JSON completo (todos los campos requeridos)
 2. Se busca el registro por ID_FLETE
-3. Se actualizan todos los campos con los nuevos valores
-4. PostgreSQL recalcula TOTAL_FLETE automáticamente al modificar SHEPING, PRECIO_CURRIER o CANTIDAD
-5. Se retorna el objeto actualizado
+3. Se valida que CANTIDAD no sea menor a la cantidad ya asignada en inventario
+   (Σ CANTIDAD_ASIGNADA del lote); si lo es → 400
+4. Se actualizan todos los campos con los nuevos valores
+5. PostgreSQL recalcula TOTAL_FLETE automáticamente al modificar SHEPING, PRECIO_CURRIER o CANTIDAD
+6. Se retorna el objeto actualizado con CANTIDAD_ASIGNADA y CANTIDAD_DISPONIBLE
 ```
 
 ### Eliminar Flete
@@ -223,17 +230,20 @@ Este es el módulo más complejo porque combina validación de FKs y cálculos a
 ```
 1. Cliente envía POST /inventario/ con JSON
 2. FastAPI valida con InventarioCreate
+   - CANTIDAD_ASIGNADA (cantidad original comprada) es obligatoria;
+     si no llega, se usa CANTIDA (legado) como cantidad asignada
 3. ┌─── VALIDACIÓN DE CATÁLOGO ───────────────────────────┐
    │ Se busca ID_CATALOGO en tabla CATALOGO                │
    │ Si no existe → 404: "El producto de catálogo          │
    │                     especificado no existe."          │
    └───────────────────────────────────────────────────────┘
-4. ┌─── CÁLCULO DE PRECIOS ───────────────────────────────┐
-   │                                                       │
-   │  ID_LOTE es obligatorio (regla de negocio):           │
-   │    a. Se busca el FLETE por ID_FLETE                  │
-   │    b. Se obtiene TOTAL_FLETE del lote                 │
-   │    c. Si el lote no existe → 404                      │
+4. ┌─── VALIDACIÓN DE CUPO DEL FLETE ─────────────────────┐
+   │ Se busca el FLETE por ID_LOTE (si no existe → 404)   │
+   │ asignado = Σ CANTIDAD_ASIGNADA de los ítems del lote │
+   │ Si asignado + nueva > FLETE.CANTIDAD → 400           │
+   │   (detalle: "trajo X, asignados Y, quedan Z")        │
+   └───────────────────────────────────────────────────────┘
+5. ┌─── CÁLCULO DE PRECIOS ───────────────────────────────┐
    │                                                       │
    │  COSTO_UNITARIO = round(PRECIO_UNITARIO + total_flete, 2) │
    │                                                       │
@@ -243,9 +253,10 @@ Este es el módulo más complejo porque combina validación de FKs y cálculos a
    │  PRECIO_VENTA = round(COSTO_UNITARIO / (1 - GANACIA/100), 2) │
    │                                                       │
    └───────────────────────────────────────────────────────┘
-5. Se crea el registro con COSTO_UNITARIO y PRECIO_VENTA pre-calculados
-6. INSERT en tabla INVENTARIO
-7. Retorna objeto completo con campos calculados
+6. Se crea el registro con CANTIDA = CANTIDAD_ASIGNADA, COSTO_UNITARIO
+   y PRECIO_VENTA pre-calculados
+7. INSERT en tabla INVENTARIO
+8. Retorna objeto completo con campos calculados
 ```
 
 ### Ejemplo numérico del cálculo
@@ -267,11 +278,13 @@ Cálculos (redondeados a 2 decimales):
 1. PUT /inventario/{id} con JSON (campos opcionales)
 2. Se busca por ID_INVENTARIO
 3. Si se envía "ID_LOTE": null → 400 (el lote es obligatorio, no puede quedar sin lote)
-4. Se aplican los campos enviados
-5. Se RECALCULAN automáticamente COSTO_UNITARIO y PRECIO_VENTA
+4. CANTIDAD_ASIGNADA solo cambia si se envía explícitamente; en ese caso se valida el
+   cupo del flete (excluyendo este ítem de la suma ya asignada) → 400 si se excede
+5. Se aplican los campos enviados
+6. Se RECALCULAN automáticamente COSTO_UNITARIO y PRECIO_VENTA
    usando los valores actualizados (posiblemente mezclando
    valores nuevos con los que ya estaban en el registro)
-6. Se ejecuta UPDATE
+7. Se ejecuta UPDATE
 ```
 
 ### Eliminar Ítem de Inventario
@@ -309,6 +322,7 @@ Módulo que combina validación de cliente, stock, cálculo de precios y ajuste 
 5. Se inserta la VENTA (FECHA default hoy)
 6. Por cada detalle: se inserta en DETALLES_VENTAS
    y se descuenta el stock: INVENTARIO.CANTIDA -= CANTIDAD
+   (CANTIDAD_ASIGNADA del ítem no cambia al vender)
 7. Se ajusta el saldo del cliente:
    CLIENTE.SALDO += (PRECIO − PAGO)
    - Pago exacto  → saldo sin cambios

@@ -79,6 +79,10 @@ class SearchBox(QWidget):
     def _haystack(self, item):
         return ""
 
+    def _permite(self, item):
+        """True si el ítem puede aparecer en el desplegable. Por defecto todos."""
+        return True
+
     def _notify(self, item):
         self.itemSelected.emit(item)
 
@@ -139,6 +143,8 @@ class SearchBox(QWidget):
         tokens = [t.lower() for t in q.split()]
         coinciden = []
         for it in self._items:
+            if not self._permite(it):
+                continue
             haystack = self._haystack(it)
             if all(t in haystack for t in tokens):
                 coinciden.append(it)
@@ -158,7 +164,8 @@ class SearchBox(QWidget):
         self._show_popup()
 
     def _mostrar_todos(self):
-        self._resultados = self._items[:20]
+        self._resultados = [it for it in self._items
+                            if self._permite(it)][:20]
         self._model.clear()
         if not self._resultados:
             self._hide_popup()
@@ -358,6 +365,16 @@ class ProductoVentaSearchBox(SearchBox):
     def id_inventario(self):
         p = self._selected
         return p["ID_INVENTARIO"] if p else None
+
+    @staticmethod
+    def _permite(producto):
+        stock = producto.get("stock")
+        if stock is None:
+            return True
+        try:
+            return float(stock) > 0
+        except (TypeError, ValueError):
+            return True
 
     @staticmethod
     def _display(producto):

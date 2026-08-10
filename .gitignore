@@ -4,3 +4,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+
+# Artefactos de compilación (PyInstaller)
+build/
+compilado/
+CJE_GUI.spec
+
+# Archivos generados en tiempo de ejecución
+URL_TUNEL.txt

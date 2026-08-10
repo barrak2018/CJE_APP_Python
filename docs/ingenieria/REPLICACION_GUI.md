@@ -64,16 +64,21 @@ Interfaz (web / móvil / escritorio) ──HTTP/JSON──► cje_api/ (FastAPI)
 
 ### Resolución de la URL de la API
 
-Prioridad (igual que `cje_gui/config.py`):
+Al arrancar, la GUI de referencia muestra un **diálogo de URL** (`url_dialog.py`) que se
+rellena con la última URL usada (almacenada en `QSettings`, clave `conexion/url`) y, si no
+hay ninguna, con la prioridad de `cje_gui/config.py`:
 
 1. Variable de entorno `CJE_API_URL`.
 2. Campo `api.url` del archivo `cje_api/config.json` (ruta junto al proyecto, o la de
    `CJE_CONFIG`).
 3. Valor por defecto `http://127.0.0.1:8000`.
 
-El valor puede apuntar a local, a una IP de LAN o a un dominio sin cambiar el código
-(`INSTALACION.md` §8). La GUI muestra "Conectado a <url>" en la barra de estado
-(`main_window.py:928`).
+El usuario confirma/edita la URL; la GUI la guarda en `QSettings` (`conexion/url`) y la
+recuerda en los siguientes arranques. El valor puede apuntar a local, a una IP de LAN o a
+un dominio sin cambiar el código (`INSTALACION.md` §8). La GUI muestra "Conectado a <url>"
+en la barra de estado (`main_window.py:990`). Una réplica debe ofrecer el equivalente: un
+campo de configuración de la URL recordado en el almacén local, precargado con
+`CJE_API_URL`/`api.url`.
 
 ---
 
@@ -90,8 +95,8 @@ Sin token válido la API responde `401`. Flujo estándar:
 
 1. `POST /token/` — form-urlencoded con `username` y `password`. Responde
    `{"access_token": "...", "token_type": "bearer"}`.
-   - Credenciales de desarrollo por defecto: `admin` / `admin123` (configurables con
-     `CJE_API_USER` y `CJE_API_PASSWORD`).
+   - Las credenciales se definen en `config.json` (sección `auth`, o con `CJE_API_USER` y
+     `CJE_API_PASSWORD`); **no hay credenciales por defecto hardcodeadas**.
 2. Enviar el token en cada petición. Expiración por defecto: 1440 min (24 h,
    configurable con `CJE_TOKEN_EXPIRE_MINUTES`).
 3. Ante un `401` con token expirado: **obtener un token nuevo y reintentar la petición una
@@ -141,6 +146,13 @@ Resumen ejecutivo. La regla completa, con ejemplos numéricos, está en
 
 - **Lote obligatorio en inventario:** no se crea/edita inventario sin `ID_LOTE` (nunca
   `null`). El campo no ofrece opción "sin lote".
+- **Cantidad asignada vs stock:** al crear inventario se pide `CANTIDAD_ASIGNADA`
+  (cantidad original comprada del flete); la API iguala `CANTIDA` (stock) a ese valor. Las
+  ventas descuentan `CANTIDA` **sin tocar** `CANTIDAD_ASIGNADA`.
+- **Cupo del flete:** la suma de `CANTIDAD_ASIGNADA` de los ítems de un flete no puede
+  superar `FLETE.CANTIDAD` (la API responde `400` si se excede). Al editar un flete, no se
+  puede reducir `CANTIDAD` por debajo de lo asignado. Los fletes exponen
+  `CANTIDAD_ASIGNADA` y `CANTIDAD_DISPONIBLE` (solo lectura).
 - **Precios monetarios a 2 decimales:** `COSTO_UNITARIO = round(PRECIO_UNITARIO +
   TOTAL_FLETE, 2)`; `PRECIO_VENTA = round(COSTO_UNITARIO / (1 − GANACIA/100), 2)`. La
   API los recalcula al guardar; la interfaz **no los envía**.
@@ -186,7 +198,7 @@ formularios y búsquedas, de modo que una réplica muestre los datos de la misma
 
 Columnas exactas de la GUI de referencia (`main_window.py`):
 
-#### Fletes (`main_window.py:376-382`)
+#### Fletes (`main_window.py:436-444`)
 
 | Cabecera | Clave JSON | Formato |
 |---|---|---|
@@ -198,9 +210,11 @@ Columnas exactas de la GUI de referencia (`main_window.py`):
 | Vía | `VIA` | etiqueta: `M`→Marítimo, `A`→Aéreo |
 | P. Courier | `PRECIO_CURRIER` | moneda |
 | Cantidad | `CANTIDAD` | entero |
+| Asignado | `CANTIDAD_ASIGNADA` | entero (solo lectura; lo calcula la API) |
+| Disponible | `CANTIDAD_DISPONIBLE` | entero (solo lectura; lo calcula la API) |
 | Total Flete | `TOTAL_FLETE` | moneda (calculado por servidor) |
 
-#### Catálogo (`main_window.py:680-683`)
+#### Catálogo (`main_window.py:742-745`)
 
 | Cabecera | Clave JSON |
 |---|---|
@@ -209,7 +223,7 @@ Columnas exactas de la GUI de referencia (`main_window.py`):
 | Marca | `MARCA` |
 | Presentación | `PRESENTACION` |
 
-#### Inventario (`main_window.py:255-263`)
+#### Inventario (`main_window.py:255-265`)
 
 | Cabecera | Clave JSON | Origen |
 |---|---|---|
@@ -218,7 +232,8 @@ Columnas exactas de la GUI de referencia (`main_window.py`):
 | Producto | `NOMBRE` | del catálogo (join en la GUI) |
 | Marca | `MARCA` | del catálogo |
 | Presentación | `PRESENTACION` | del catálogo |
-| Cantidad | `CANTIDA` | ítem |
+| Inventario Final (Actual) | `CANTIDA` | ítem (stock actual; lo descuentan las ventas) |
+| Inventario Inicial | `CANTIDAD_ASIGNADA` | ítem (cantidad original comprada del flete) |
 | Lote | `ID_LOTE` | ítem (ID del flete) |
 | P. Unitario | `PRECIO_UNITARIO` | ítem, moneda |
 | Costo Unit. | `COSTO_UNITARIO` | ítem, moneda |
@@ -227,11 +242,11 @@ Columnas exactas de la GUI de referencia (`main_window.py`):
 
 > Las columnas Producto/Marca/Presentación se resuelven en la GUI: `get_inventario()`
 > devuelve el `ID_CATALOGO` y la interfaz lo cruza con `get_catalogo()` para mostrar el
-> nombre (`main_window.py:349-355`). Una réplica puede hacer lo mismo o pedir un endpoint
+> nombre (`main_window.py:358-365`). Una réplica puede hacer lo mismo o pedir un endpoint
 > enriquecido; si usa el cruce, **una sola carga de catálogo** alimenta la tabla y los
 > formularios (no dos peticiones).
 
-#### Clientes (`main_window.py:607-611`)
+#### Clientes (`main_window.py:669-673`)
 
 | Cabecera | Clave JSON | Formato |
 |---|---|---|
@@ -241,7 +256,7 @@ Columnas exactas de la GUI de referencia (`main_window.py`):
 | Teléfono | `TELEFONO` | texto |
 | Saldo | `SALDO` | moneda (puede ser negativa) |
 
-#### Ventas (`main_window.py:702-707`)
+#### Ventas (`main_window.py:764-769`)
 
 | Cabecera | Clave JSON | Formato |
 |---|---|---|
@@ -254,7 +269,7 @@ Columnas exactas de la GUI de referencia (`main_window.py`):
 | Forma | `FORMA_DE_PAGO` | etiqueta |
 | Pago | `PAGO` | moneda |
 
-#### Abonos (`main_window.py:828-832`)
+#### Abonos (`main_window.py:890-894`)
 
 | Cabecera | Clave JSON | Formato |
 |---|---|---|
@@ -274,7 +289,7 @@ obligatorio** (texto tecleado sin seleccionar no es válido).
 - **ClienteSearchBox** (`cliente_search.py:269-326`) — filtra por **cédula, nombre o
   correo**. Resultado: `Cédula - Nombre` con tooltip de correo, teléfono y saldo. Se usa en
   Clientes, Ventas y Abonos. Al elegir en la pestaña Clientes se abre el Detalle y la
-  búsqueda se limpia (`main_window.py:662-666`).
+  búsqueda se limpia (`main_window.py:728`).
 - **CatalogoSearchBox** (`cliente_search.py:402-466`) — filtra por **nombre, marca o
   presentación**. Desplegable en dos líneas: `ID - NOMBRE` y debajo `MARCA · PRESENTACIÓN`
   (segunda línea solo si existen). Campo `ID_CATALOGO` del inventario.
@@ -308,12 +323,12 @@ Diálogo genérico con un campo por entrada (`dialogs.py`). Tipos de campo y su 
 
 ### 5.5 Diálogos de detalle
 
-- **Detalle del Cliente** (`main_window.py:416-602`): encabezado con cédula-nombre,
+- **Detalle del Cliente** (`main_window.py:478-665`): encabezado con cédula-nombre,
   correo, teléfono; dos tablas laterales **Compras** (ID, Fecha, Tipo, Forma, Precio,
   Pagado) y **Abonos** (ID, Fecha, Cantidad); resumen inferior con Total comprado, Pagado
   en ventas, Total abonado, Dinero pagado y **Saldo actual**. Doble clic en una compra abre
   el detalle de la venta. Botón "Editar" abre el form de cliente y recarga.
-- **Detalle de Venta** (`main_window.py:772-821`): info de la venta (fecha, cliente,
+- **Detalle de Venta** (`main_window.py:834-870`): info de la venta (fecha, cliente,
   tipo/forma, precio total, pagado) y tabla de líneas **Producto, P. Unitario, Cantidad,
   Subtotal** (moneda en precios y subtotales).
 
@@ -334,7 +349,7 @@ Reglas completas en `GUIA_GUI.md` §4 y `LOGICA_NEGOCIO.md` "Formato de números
 
 ## 6. Patrón CRUD genérico
 
-Todos los módulos (salvo Ventas) comparten el patrón `ModuleWidget` (`main_window.py:25-250`):
+Todos los módulos (salvo Ventas) comparten el patrón `ModuleWidget` (`main_window.py:25-251`):
 
 - **Toolbar:** botón "Refrescar", checkbox "Auto-refresh" (ON por defecto), y botones
   Nuevo / Editar / Eliminar (en Clientes y Ventas se agrega "Ver Detalle").
@@ -363,6 +378,10 @@ Todos los módulos (salvo Ventas) comparten el patrón `ModuleWidget` (`main_win
 - CRUD estándar. `FECHA` y `PROVEEDOR` obligatorios; `SHEPING`/`PRECIO_CURRIER` ≥ 0;
   `VIA` combo Marítimo/Aéreo; `CANTIDAD` entero ≥ 1.
 - `TOTAL_FLETE` lo calcula el servidor; no se muestra como editable.
+- La tabla muestra **Asignado** (`CANTIDAD_ASIGNADA`) y **Disponible**
+  (`CANTIDAD_DISPONIBLE`), ambos de solo lectura (los calcula la API).
+- Al editar no se puede reducir `CANTIDAD` por debajo de lo asignado (la API responde
+  `400`); se muestra el `detail`.
 - No se elimina un flete con inventario asociado (la API responde `400`).
 
 ### 7.2 Catálogo
@@ -372,16 +391,24 @@ Todos los módulos (salvo Ventas) comparten el patrón `ModuleWidget` (`main_win
 
 ### 7.3 Inventario
 
-- **Antes de abrir el formulario** (`_prepare_async`, `main_window.py:286-319`): carga en
+- **Antes de abrir el formulario** (`_prepare_async`, `main_window.py:291-328`): carga en
   segundo plano el catálogo y los fletes.
 - El **combo de lote** muestra `FECHA PROVEEDOR (VIA)` (ej. `2026-08-05 Perfumería París
   (A)`) ordenado por **FECHA descendente**; el valor guardado es el **`ID_FLETE`**
-  (`currentData`), que se envía como `ID_LOTE` (`main_window.py:301-305`).
+  (`currentData`), que se envía como `ID_LOTE` (`main_window.py:308-318`). Cuando la API
+  lo soporta, se agrega "‑ queda N" con `CANTIDAD_DISPONIBLE`.
 - **Selector de producto:** CatalogoSearchBox (nombre/marca/presentación, `ID - NOMBRE`).
-- **Vista previa en vivo:** "Precio de venta estimado: $X" = `(PRECIO_UNITARIO +
-  TOTAL_FLETE_del_lote) / (1 − GANACIA/100)`; pide seleccionar lote si falta
-  (`main_window.py:357-371`). Es orientativa; el valor real lo fija la API.
-- `GANACIA` entre 0.1 y 99.9; `PRECIO_UNITARIO` ≥ 0.01; `CANTIDA` ≥ 1.
+- **Campos:** `CANTIDAD_ASIGNADA` (Cantidad asignada (original), entero ≥ 1, obligatorio)
+  y, al editar, `CANTIDA` (stock actual, editable). Al crear, `CANTIDA` no se muestra (la
+  API lo iguala a la asignada).
+- **Vista previa en vivo** (`main_window.py:392-431`): muestra el **cupo del flete**
+  ("Flete #N: trajo X, asignados Y, disponibles Z") con advertencia si la cantidad asignada
+  lo excede, y el precio de venta estimado = `round(round(PRECIO_UNITARIO + TOTAL_FLETE, 2)
+  / (1 − GANACIA/100), 2)`; pide seleccionar lote si falta. Es orientativa; el valor real lo
+  fija la API.
+- `GANACIA` entre 0.1 y 99.9; `PRECIO_UNITARIO` ≥ 0.01; `CANTIDAD_ASIGNADA` ≥ 1.
+- Al guardar, la API valida el **cupo del flete**; si se excede responde `400` y la GUI
+  muestra el `detail`.
 
 ### 7.4 Clientes
 
@@ -418,7 +445,7 @@ Es el módulo más complejo; la referencia vive en `venta_dialog.py`. Flujo de u
    opcional. Si el pago excede el monto a pagar (> 0.005), pide confirmación ("el excedente
    quedará como saldo a favor").
 
-**Edición** (`main_window.py:734-753`): carga `GET /ventas/{id}`, precarga cliente, fecha,
+**Edición** (`main_window.py:796-815`): carga `GET /ventas/{id}`, precarga cliente, fecha,
 tipo/forma, PAGO, ítems con cantidades y el `PRECIO_UNITARIO` guardado por línea (o el
 `PRECIO_VENTA` si es NULL); el `PRECIO` guardado se precarga **solo si difiere** del
 subtotal calculado (en caso contrario queda vacío = recálculo). El stock de cada línea
@@ -432,7 +459,7 @@ subtotal calculado (en caso contrario queda vacío = recálculo). El stock de ca
 
 - Cliente obligatorio (ClienteSearchBox, precargado con los clientes).
 - Al seleccionar el cliente, muestra orientativamente: "Deuda actual del cliente: $X" o
-  "Sin deuda; el cliente tiene saldo a favor de $Y" (`main_window.py:869-880`).
+  "Sin deuda; el cliente tiene saldo a favor de $Y" (`main_window.py:931-942`).
 - Fecha opcional (default hoy); `CANTIDAD` > 0 obligatorio.
 - Al editar/eliminar, la API revierte el efecto sobre el SALDO; la GUI recarga tras guardar.
 
@@ -442,22 +469,25 @@ subtotal calculado (en caso contrario queda vacío = recálculo). El stock de ca
 
 Comportamiento de referencia (`main.py`, `login_dialog.py`, `api_client.py`):
 
-1. Al arrancar, si hay credenciales guardadas, se intenta **login automático**; cualquier
-   fallo cae al diálogo manual (`main.py:46-53`).
-2. **LoginDialog** (`login_dialog.py:9-78`): campos Usuario y Contraseña (enmascarada),
+1. Al arrancar se muestra el **diálogo de URL** de la API (§2): precargado con la última
+   URL usada (`QSettings conexion/url`) o con `CJE_API_URL`/`api.url`; si se cancela, el
+   programa termina. La URL elegida se guarda.
+2. Si hay credenciales guardadas, se intenta **login automático**; cualquier fallo cae al
+   diálogo manual (`main.py:46-53`).
+3. **LoginDialog** (`login_dialog.py:9-78`): campos Usuario y Contraseña (enmascarada),
    checkbox "Recordar credenciales" **marcado por defecto**, botones "Iniciar sesión"
    (default) / "Cancelar", y un label de error en rojo. Enter en usuario pasa a la
    contraseña; Enter en contraseña inicia sesión.
-3. Credenciales guardadas (solo si "Recordar") en el almacén persistente de la plataforma
+4. Credenciales guardadas (solo si "Recordar") en el almacén persistente de la plataforma
    (en Qt: `QSettings`, claves `auth/usuario` y `auth/password`). **No guardar el token**;
    solo usuario/contraseña.
-4. El token vive **solo en memoria** y se envía como header en cada petición.
-5. **Re-login automático:** ante `401`, si hay credenciales en memoria, obtener token nuevo
+5. El token vive **solo en memoria** y se envía como header en cada petición.
+6. **Re-login automático:** ante `401`, si hay credenciales en memoria, obtener token nuevo
    y reintentar una vez (`api_client.py:39-48`).
-6. **Cerrar sesión** (toolbar "Cerrar sesión"): confirmación (default **No**) → borrar
+7. **Cerrar sesión** (toolbar "Cerrar sesión"): confirmación (default **No**) → borrar
    credenciales guardadas → limpiar token/header → cerrar la app. La referencia **no
    vuelve al login**: termina el proceso (`main.py:33-36`).
-7. Barra de estado: "Conectado a <url>".
+8. Barra de estado: "Conectado a <url>".
 
 ---
 
@@ -502,13 +532,13 @@ Equivalencias entre la referencia Qt (PySide6) y otras tecnologías:
 | Devolver resultados al hilo UI | señales Qt en cola | callbacks en el hilo principal / `runOnUiThread` / `Dispatcher` |
 | Diálogos modales | `FormDialog`, `QMessageBox` | `DialogFragment`/`AlertDialog` (Android), `Modal` (web), `JDialog` (Java) |
 | Autocompletado | `SearchBox` custom (`cliente_search.py`) | `AutocompleteTextView`, `<input list>`, `ComboBox` editable |
-| Guardado de config | `cje_gui/config.py` + `config.json` | Archivo de config propio + variable de entorno `CJE_API_URL` |
+| Guardado de config | `cje_gui/config.py` + `config.json`; URL recordada en `QSettings` (`conexion/url`) | Archivo de config propio + variable de entorno `CJE_API_URL`; URL persistida en el almacén local |
 | Validación de campos | `dialogs.py` (required, min, max, DecimalSpinBox) | Validators de cada framework + misma lógica en el cliente |
 
 Prácticas generales:
 
-- Usar la **URL base** de `config.json`/`CJE_API_URL` (§2) para apuntar a local, LAN o
-  producción sin recompilar.
+- Usar la **URL base** del diálogo de URL / `config.json` / `CJE_API_URL` (§2) para apuntar
+  a local, LAN o producción sin recompilar; recordar la URL elegida en el almacén local.
 - **Una sola implementación de "parsear número con punto o coma"** y **una sola de
   "formatear moneda"** reutilizada en toda la app (nunca duplicar lógica por pantalla).
 - Mantener el patrón CRUD genérico: no duplicar código de listado/formulario por módulo.
@@ -525,6 +555,8 @@ Prácticas generales:
 |---|---|
 | Flete | Lote de mercancía importada (proveedor, courier, costos, cantidad). Es el "lote" del inventario. |
 | Lote (`ID_LOTE`) | Referencia del flete asociado a cada ítem de inventario. Obligatorio. |
+| `CANTIDAD_ASIGNADA` | Cantidad original comprada del flete para un ítem; no cambia al vender. En fletes, es la suma de las de sus ítems. |
+| `CANTIDAD_DISPONIBLE` | `max(0, FLETE.CANTIDAD − CANTIDAD_ASIGNADA)`; cupo restante por asignar. |
 | `TOTAL_FLETE` | Costo de envío unitario del flete, calculado por la BD. |
 | `COSTO_UNITARIO` | `PRECIO_UNITARIO + TOTAL_FLETE`, redondeado a 2. |
 | `PRECIO_VENTA` | `COSTO_UNITARIO / (1 − GANACIA/100)`, redondeado a 2. |

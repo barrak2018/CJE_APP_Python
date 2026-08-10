@@ -23,11 +23,25 @@ try:
     import config as _config
     _DEFAULT_URL = _config.get_setting("api", "url")
 except Exception:
+    _config = None
     _DEFAULT_URL = "http://127.0.0.1:8000"
 
 BASE_URL = os.environ.get("CJE_API_URL", _DEFAULT_URL)
-API_USER = os.environ.get("CJE_API_USER", "admin")
-API_PASSWORD = os.environ.get("CJE_API_PASSWORD", "admin123")
+
+# Credenciales de la API: solo desde variables de entorno o config.json.
+# Nunca hay valores por defecto hardcodeados (admin/admin123).
+API_USER = os.environ.get("CJE_API_USER")
+API_PASSWORD = os.environ.get("CJE_API_PASSWORD")
+if _config is not None and (not API_USER or not API_PASSWORD):
+    try:
+        API_USER = API_USER or _config.get_setting("auth", "api_user")
+        API_PASSWORD = API_PASSWORD or _config.require_secret("auth", "api_password")
+    except Exception:
+        pass
+
+if not API_USER or not API_PASSWORD:
+    print("[AVISO] No hay credenciales de API (usa CJE_API_USER / CJE_API_PASSWORD "
+          "o define los secretos en cje_api/config.json); se omitirá la Parte A.")
 
 HEADERS = {}
 
@@ -45,6 +59,10 @@ def test_api():
     import requests
 
     print("\n=== PARTE A: API en vivo (read-only) ===")
+    if not API_USER or not API_PASSWORD:
+        check("credenciales de API configuradas", False,
+              "falta CJE_API_USER/CJE_API_PASSWORD o los secretos en config.json")
+        return
     try:
         r = requests.get(f"{BASE_URL}/db-check", timeout=10)
         check("GET /db-check -> 200", r.status_code == 200, r.text)

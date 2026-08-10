@@ -256,7 +256,9 @@ class InventarioWidget(ModuleWidget):
             ("ID", "ID_INVENTARIO"), ("Catálogo", "ID_CATALOGO"),
             ("Producto", "NOMBRE"), ("Marca", "MARCA"),
             ("Presentación", "PRESENTACION"),
-            ("Cantidad", "CANTIDA"), ("Lote", "ID_LOTE"),
+            ("Inventario Final (Actual)", "CANTIDA"),
+            ("Inventario Inicial", "CANTIDAD_ASIGNADA"),
+            ("Lote", "ID_LOTE"),
             ("P. Unitario", "PRECIO_UNITARIO"),
             ("Costo Unit.", "COSTO_UNITARIO"),
             ("Ganancia %", "GANACIA"), ("P. Venta", "PRECIO_VENTA"),
@@ -265,7 +267,10 @@ class InventarioWidget(ModuleWidget):
             FieldDef("ID_CATALOGO", "Producto (Catálogo)", "search",
                      required=True, search_cls=CatalogoSearchBox,
                      search_key="ID_CATALOGO"),
-            FieldDef("CANTIDA", "Cantidad", "int", required=True, minimum=1),
+            FieldDef("CANTIDA", "Cantidad (stock actual)", "int",
+                     required=True, minimum=0),
+            FieldDef("CANTIDAD_ASIGNADA", "Cantidad asignada (original)",
+                     "int", required=True, minimum=1),
             FieldDef("ID_LOTE", "Lote (Flete)", "char", required=True,
                      options=[]),
             FieldDef("PRECIO_UNITARIO", "Precio Unitario", "float",
@@ -298,10 +303,14 @@ class InventarioWidget(ModuleWidget):
             self._flete_total = {
                 f["ID_FLETE"]: float(f.get("TOTAL_FLETE") or 0.0)
                 for f in fletes}
+            self._flete_info = {
+                f["ID_FLETE"]: f
+                for f in fletes}
             fletes_ordenados = sorted(
                 fletes, key=lambda f: str(f.get("FECHA") or ""), reverse=True)
             opts_flete = [
-                (f["ID_FLETE"], f'{f["FECHA"]} {f["PROVEEDOR"]} ({f["VIA"]})')
+                (f["ID_FLETE"], f'{f["FECHA"]} {f["PROVEEDOR"]} ({f["VIA"]})'
+                 + (f" - queda {f['CANTIDAD_DISPONIBLE']}" if f.get("CANTIDAD_DISPONIBLE") is not None else ""))
                 for f in fletes_ordenados]
             for f in self.fields:
                 if f.name == "ID_CATALOGO":
@@ -332,7 +341,7 @@ class InventarioWidget(ModuleWidget):
             self._refreshing = False
             catalogo, inventario = data
             self._catalogo = {c["ID_CATALOGO"]: c for c in catalogo}
-            self._records = inventario
+            self._records = list(inventario)
             self._populate_table()
             self._restore_selection(selected_pk)
 
@@ -354,8 +363,35 @@ class InventarioWidget(ModuleWidget):
             rec["PRESENTACION"] = cat.get("PRESENTACION") or ""
         super()._populate_table()
 
-    def _preview_callback(self):
+    def _on_new(self):
+        def open_dialog():
+            create_fields = [f for f in self.fields if f.name != "CANTIDA"]
+            dlg = FormDialog("Nuevo", create_fields, parent=self,
+                             preview=self._preview_callback())
+            if dlg.exec():
+                data = dlg.get_data()
+                self._run_mutation(lambda a: self.api_create(a, data),
+                                   error_prefix="No se pudo crear")
+        self._prepare_async(open_dialog)
+
+    def _on_edit(self):
+        rec = self._selected_record()
+        if not rec:
+            return
+
+        def open_dialog():
+            dlg = FormDialog("Editar", self.fields, data=rec, parent=self,
+                             preview=self._preview_callback(rec))
+            if dlg.exec():
+                data = dlg.get_data()
+                self._run_mutation(
+                    lambda a: self.api_update(a, self._pk_value(rec), data),
+                    error_prefix="No se pudo actualizar")
+        self._prepare_async(open_dialog)
+
+    def _preview_callback(self, current_rec: dict | None = None):
         flete_total = self._flete_total
+        flete_info = getattr(self, "_flete_info", {})
 
         def preview(data: dict):
             id_lote = data.get("ID_LOTE")
@@ -363,11 +399,35 @@ class InventarioWidget(ModuleWidget):
             ganancia = data.get("GANACIA")
             if id_lote is None:
                 return "Seleccione el lote para calcular el precio de venta."
-            if pu is None or ganancia is None or ganancia <= 0 or ganancia >= 100:
-                return ""
-            costo = pu + flete_total.get(id_lote, 0.0)
-            pv = costo / (1 - ganancia / 100.0)
-            return f"Precio de venta estimado: ${pv:,.2f}"
+
+            partes = []
+            info = flete_info.get(id_lote)
+            if info is not None:
+                asignados = sum(
+                    (rec.get("CANTIDAD_ASIGNADA") or 0)
+                    for rec in self._records
+                    if rec.get("ID_LOTE") == id_lote
+                )
+                if current_rec is not None:
+                    asignados -= current_rec.get("CANTIDAD_ASIGNADA") or 0
+                disponibles = (info.get("CANTIDAD") or 0) - asignados
+                partes.append(
+                    f"Flete #{id_lote}: trajo {info.get('CANTIDAD')}, "
+                    f"asignados {asignados}, disponibles {disponibles}")
+
+            asignada = data.get("CANTIDAD_ASIGNADA")
+            if info is not None and asignada is not None:
+                if asignada > disponibles:
+                    partes.append(
+                        f"ADVERTENCIA: asigna {asignada} pero solo quedan "
+                        f"{disponibles} por asignar.")
+
+            if (pu is not None and ganancia is not None
+                    and 0 < ganancia < 100 and id_lote is not None):
+                costo = round(pu + flete_total.get(id_lote, 0.0), 2)
+                pv = round(costo / (1 - ganancia / 100.0), 2)
+                partes.append(f"P. venta estimado: ${pv:,.2f}")
+            return " | ".join(partes)
         return preview
 
 
@@ -378,7 +438,9 @@ class FleteWidget(ModuleWidget):
             ("Proveedor", "PROVEEDOR"),
             ("Shipping", "SHEPING"), ("Courier", "NOMBRE_CURRIER"),
             ("Vía", "VIA"), ("P. Courier", "PRECIO_CURRIER"),
-            ("Cantidad", "CANTIDAD"), ("Total Flete", "TOTAL_FLETE"),
+            ("Cantidad", "CANTIDAD"), ("Asignado", "CANTIDAD_ASIGNADA"),
+            ("Disponible", "CANTIDAD_DISPONIBLE"),
+            ("Total Flete", "TOTAL_FLETE"),
         ]
         fields = [
             FieldDef("FECHA", "Fecha", "date", required=True),

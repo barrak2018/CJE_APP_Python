@@ -7,6 +7,7 @@ class Inventario(Base):
     ID_INVENTARIO = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     ID_CATALOGO = Column(BigInteger, ForeignKey("CATALOGO.ID_CATALOGO"), nullable=False)
     CANTIDA = Column(Integer, default=0, nullable=False)
+    CANTIDAD_ASIGNADA = Column(Integer, default=0, nullable=False)
     ID_LOTE = Column(BigInteger, ForeignKey("FLETE.ID_FLETE"), nullable=False)
     PRECIO_UNITARIO = Column(Float, nullable=True)
     COSTO_UNITARIO = Column(Float, nullable=True)

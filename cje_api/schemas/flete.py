@@ -22,5 +22,8 @@ class FleteResponse(BaseModel):
     PRECIO_CURRIER: float
     CANTIDAD: int
     TOTAL_FLETE: float | None = None
+    # Cantidad ya asignada en inventario (no cambia al vender) y cupo restante.
+    CANTIDAD_ASIGNADA: int = 0
+    CANTIDAD_DISPONIBLE: int = 0
 
     model_config = ConfigDict(from_attributes=True)

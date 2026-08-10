@@ -76,6 +76,8 @@ Representa un lote de mercancía importada con datos del proveedor, courier y co
 | `PRECIO_CURRIER` | `float` | Precio cobrado por el courier (≥ 0, default `0.0`) |
 | `CANTIDAD` | `int` | Cantidad de unidades en el lote (> 0, default `1`) |
 | `TOTAL_FLETE` | `float \| null` | Calculado automáticamente por la BD |
+| `CANTIDAD_ASIGNADA` | `int` | Suma de las cantidades asignadas de los ítems de inventario del flete (solo lectura) |
+| `CANTIDAD_DISPONIBLE` | `int` | `max(0, CANTIDAD − CANTIDAD_ASIGNADA)`, cupo restante para asignar (solo lectura) |
 
 ---
 
@@ -114,7 +116,9 @@ Registra un nuevo flete.
   "VIA": "M",
   "PRECIO_CURRIER": 80.0,
   "CANTIDAD": 50,
-  "TOTAL_FLETE": 4.6
+  "TOTAL_FLETE": 4.6,
+  "CANTIDAD_ASIGNADA": 0,
+  "CANTIDAD_DISPONIBLE": 50
 }
 ```
 
@@ -165,9 +169,12 @@ Actualiza completamente un flete existente. Todos los campos son requeridos.
 
 **Body:** Mismo formato que `POST /fletes/`.
 
+> No se puede reducir `CANTIDAD` por debajo de la cantidad ya asignada en inventario
+> (`CANTIDAD_ASIGNADA` del flete): la API responde `400` con el detalle.
+
 **Respuesta `200`:** Objeto Flete actualizado.  
 **Respuesta `404`:** `"Flete con ID {id} no encontrado"`  
-**Respuesta `400`:** Error de actualización.
+**Respuesta `400`:** Error de actualización (incluye reducir `CANTIDAD` por debajo de lo asignado).
 
 ```bash
 curl -X PUT http://localhost:8000/fletes/1 ^
@@ -425,7 +432,8 @@ Registra unidades de productos del catálogo en stock, con costos y precios calc
 |---|---|---|
 | `ID_INVENTARIO` | `int` | Identificador único (auto-generado) |
 | `ID_CATALOGO` | `int` | FK → Catálogo (obligatorio) |
-| `CANTIDA` | `int` | Cantidad de unidades (default `0`) |
+| `CANTIDA` | `int` | Cantidad de unidades en stock (default `0`). Las ventas la descuentan |
+| `CANTIDAD_ASIGNADA` | `int` | Cantidad original comprada del flete para este producto. No cambia al vender; al crear, la API iguala `CANTIDA` a este valor |
 | `ID_LOTE` | `int` | FK → Flete (obligatorio, todo producto debe tener un lote asociado) |
 | `PRECIO_UNITARIO` | `float` | Precio de compra por unidad |
 | `COSTO_UNITARIO` | `float \| null` | Calculado: `round(PRECIO_UNITARIO + TOTAL_FLETE, 2)` |
@@ -436,13 +444,14 @@ Registra unidades de productos del catálogo en stock, con costos y precios calc
 
 ### `POST /inventario/`
 
-Registra un nuevo ítem en inventario. Se calculan automáticamente `COSTO_UNITARIO` y `PRECIO_VENTA` (ambos **redondeados a 2 decimales**).
+Registra un nuevo ítem en inventario. Se calculan automáticamente `COSTO_UNITARIO` y
+`PRECIO_VENTA` (ambos **redondeados a 2 decimales**) y se valida el **cupo del flete**.
 
 **Body:**
 ```json
 {
   "ID_CATALOGO": 1,
-  "CANTIDA": 30,
+  "CANTIDAD_ASIGNADA": 30,
   "ID_LOTE": 1,
   "PRECIO_UNITARIO": 8.50,
   "GANACIA": 33.3
@@ -452,7 +461,8 @@ Registra un nuevo ítem en inventario. Se calculan automáticamente `COSTO_UNITA
 | Campo | Tipo | Requerido | Validaciones |
 |---|---|---|---|
 | `ID_CATALOGO` | `int` | Sí | Debe existir en Catálogo |
-| `CANTIDA` | `int` | No | ≥ 0, default `0` |
+| `CANTIDAD_ASIGNADA` | `int` | Sí (salvo que se envíe `CANTIDA`) | ≥ 0. Cantidad original comprada del flete. Si se omite, se usa `CANTIDA` (legado) como cantidad asignada |
+| `CANTIDA` | `int` | No | ≥ 0, default `0`. **Legado**: solo se usa como cantidad asignada si no se envía `CANTIDAD_ASIGNADA` |
 | `ID_LOTE` | `int` | Sí | Debe existir en Flete. Todo producto requiere un lote asociado |
 | `PRECIO_UNITARIO` | `float` | Sí | Debe ser `> 0` |
 | `GANACIA` | `float` | Sí | Debe ser `> 0` y `< 100` |
@@ -463,6 +473,7 @@ Registra un nuevo ítem en inventario. Se calculan automáticamente `COSTO_UNITA
   "ID_INVENTARIO": 1,
   "ID_CATALOGO": 1,
   "CANTIDA": 30,
+  "CANTIDAD_ASIGNADA": 30,
   "ID_LOTE": 1,
   "PRECIO_UNITARIO": 8.5,
   "COSTO_UNITARIO": 13.1,
@@ -479,12 +490,15 @@ PRECIO_VENTA   = round(13.10 / (1 - 0.333), 2) = 19.64
 
 **Respuesta `422`:** Si `GANACIA` no está en el rango `(0, 100)` o `PRECIO_UNITARIO <= 0`.  
 **Respuesta `404`:** `"El producto de catálogo especificado no existe."`  
-**Respuesta `404`:** `"El lote (FLETE) especificado no existe."`
+**Respuesta `404`:** `"El lote (FLETE) especificado no existe."`  
+**Respuesta `400`:** Si la suma de `CANTIDAD_ASIGNADA` de los ítems del flete supera
+`FLETE.CANTIDAD` (el `detail` indica cuánto trajo el flete, cuánto ya está asignado y
+cuánto queda).
 
 ```bash
 curl -X POST http://localhost:8000/inventario/ ^
   -H "Content-Type: application/json" ^
-  -d "{\"ID_CATALOGO\":1,\"CANTIDA\":30,\"ID_LOTE\":1,\"PRECIO_UNITARIO\":8.5,\"GANACIA\":33.3}"
+  -d "{\"ID_CATALOGO\":1,\"CANTIDAD_ASIGNADA\":30,\"ID_LOTE\":1,\"PRECIO_UNITARIO\":8.5,\"GANACIA\":33.3}"
 ```
 
 ---
@@ -516,7 +530,10 @@ curl http://localhost:8000/inventario/1
 
 ### `PUT /inventario/{id_inventario}`
 
-Actualiza un ítem del inventario. Los campos calculados (`COSTO_UNITARIO`, `PRECIO_VENTA`) se recalculan automáticamente con los nuevos valores.
+Actualiza un ítem del inventario. Los campos calculados (`COSTO_UNITARIO`, `PRECIO_VENTA`)
+se recalculan automáticamente con los nuevos valores. `CANTIDAD_ASIGNADA` solo cambia si se
+envía explícitamente (ediciones de stock no la alteran) y, en ese caso, se valida el cupo
+del flete.
 
 **Body:**
 ```json
@@ -530,13 +547,14 @@ Actualiza un ítem del inventario. Los campos calculados (`COSTO_UNITARIO`, `PRE
 |---|---|---|
 | `ID_CATALOGO` | `int` | No |
 | `CANTIDA` | `int` | No |
+| `CANTIDAD_ASIGNADA` | `int` | No (si se envía, se valida el cupo del flete) |
 | `ID_LOTE` | `int` | No |
 | `PRECIO_UNITARIO` | `float` | No |
 | `GANACIA` | `float` | No |
 
 **Respuesta `200`:** Objeto Inventario recalculado.  
 **Respuesta `404`:** `"Registro de inventario no encontrado."`  
-**Respuesta `400`:** Si se intenta poner `ID_LOTE` como `null` (`"Todo producto de inventario debe tener un lote (FLETE) asociado."`)
+**Respuesta `400`:** Si se intenta poner `ID_LOTE` como `null` (`"Todo producto de inventario debe tener un lote (FLETE) asociado."`) o si `CANTIDAD_ASIGNADA` excede el cupo del flete.
 
 ```bash
 curl -X PUT http://localhost:8000/inventario/1 ^
